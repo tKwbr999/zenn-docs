@@ -90,7 +90,8 @@ https://platform.openai.com/docs/api-reference/chat/create
 
 以下がそのコードになります。
 ```
-var japaneseRegex = regexp.MustCompile(`[おあ\p{Hiragana}\p{Katakana}\p{Han}\p{Latin}\p{P}\p{S}\p{N}\p{Z}\x{30FC}\x{FF10}-\x{FF19}\x{200D}\x{000A}\x{000D}]`)
+var japaneseRegex = regexp.MustCompile(`[\p{Hiragana}\p{Katakana}\p{Han}\p{Latin}\p{P}\p{S}\p{N}\p{Z}\x{30FC}\x{200D}\x{000A}\x{000D}]`)
+
 
 func isJapanese(text string) bool {
 	for i, r := range text {
@@ -134,7 +135,6 @@ func isEmoji(r rune) bool {
 
 ### 特定の文字
 * `\x{30FC}`: 長音記号 (ー) をマッチします。
-* `\x{FF10}-\x{FF19}`: 半角数字 (０-９) をマッチします。
 * `\x{200D}`: ゼロ幅連結子 (ZWJ) をマッチします。
 * `\x{000A}`: 改行コードをマッチします。
 * `\x000D}`: 復帰コードをマッチします。
