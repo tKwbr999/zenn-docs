@@ -10,6 +10,13 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@notionhq/client": "^2.3.0",
+    "dotenv": "^16.4.7",
+    "gray-matter": "^4.0.3",
     "zenn-cli": "^0.1.158"
+  },
+  "devDependencies": {
+    "prettier": "^3.5.3",
+    "prettier-plugin-tailwindcss": "^0.6.11"
   }
 }
