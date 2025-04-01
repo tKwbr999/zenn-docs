@@ -78,14 +78,25 @@ const clearPageBlocks = async (pageId) => {
     startCursor = response.next_cursor;
   }
 
+  console.log(`Found ${blocksToDelete.length} blocks to delete.`); // 追加: 取得したブロック数
+
   // Notion API は一度に削除できるブロック数に制限があるため、ループで削除
   // 削除は逆順で行うことで、子ブロックを持つブロックの削除問題を回避しやすくする
   for (const block of blocksToDelete.reverse()) {
+    // 待機時間を追加して API 負荷を軽減
+    await new Promise(resolve => setTimeout(resolve, 100)); // 100ミリ秒待機
+    console.log(`Attempting to delete block: ${block.id} (Type: ${block.type})`); // 追加: 削除試行ログ
     try {
       await notion.blocks.delete({ block_id: block.id });
+      console.log(`Successfully deleted block: ${block.id}`); // 追加: 削除成功ログ
     } catch (error) {
-      // 子を持つブロックなどを削除しようとするとエラーになることがあるため警告に留める
-      console.warn(`Could not delete block ${block.id} (might have children or be unsupported):`, error.message);
+      // アーカイブ済みブロックのエラーは無視し、それ以外は警告を表示
+      if (error.code === 'validation_error' && error.message.includes('archived')) {
+        console.log(`Skipping archived block: ${block.id}`);
+      } else {
+        console.warn(`Could not delete block ${block.id} (Type: ${block.type}):`, error.message);
+        // 競合エラーの場合は少し待ってリトライするなどの処理も検討可能
+      }
     }
   }
 };
@@ -185,21 +196,36 @@ const uploadMarkdownToNotion = async (filePath) => {
         pageId = response.id;
         console.log(`New page created with ID: ${pageId}`);
 
-        // 新しく作成したページにブロックを追加
         console.log('Appending blocks to the new page...');
         await appendBlocksToPage(pageId, notionBlocks);
         console.log('Blocks appended to the new page.');
 
         // Markdown ファイルに notionPageId を追記
-        const newFrontmatter = { ...frontmatter, notionPageId: pageId };
-        // YAML Frontmatter の整形
-        const newMarkdownContent = matter.stringify(markdownBody, newFrontmatter, {
-            lineWidth: -1, // 自動改行しない
-            noRefs: true, // YAML参照を使わない
-            sortKeys: false // キーをソートしない (元の順序を維持)
-        });
-        await fs.writeFile(filePath, newMarkdownContent, 'utf-8');
-        console.log(`Added notionPageId to ${filePath}`);
+        // ファイル内容を読み込み、notionPageId を追記/更新
+        let fileContent = await fs.readFile(filePath, 'utf-8');
+        const frontmatterRegex = /^---\s*([\s\S]*?)\s*---/;
+        const match = fileContent.match(frontmatterRegex);
+
+        if (match) {
+          const frontmatterContent = match[1];
+          const notionPageIdLine = `notionPageId: ${pageId}`;
+           const notionPageIdRegex = /^notionPageId:\s*.*/m;
+
+          if (notionPageIdRegex.test(frontmatterContent)) {
+            // 既存の notionPageId 行を置換
+            fileContent = fileContent.replace(notionPageIdRegex, notionPageIdLine);
+            console.log(`Updated notionPageId in ${filePath}`);
+          } else {
+            // --- の直後に notionPageId 行を挿入
+            const lines = fileContent.split('\n');
+            lines.splice(1, 0, notionPageIdLine); // 2行目 (--- の次) に挿入
+            fileContent = lines.join('\n');
+            console.log(`Added notionPageId to ${filePath}`);
+         }
+          await fs.writeFile(filePath, fileContent, 'utf-8');
+        } else {
+          console.warn(`Could not find frontmatter in ${filePath}. notionPageId was not added.`);
+        }
 
         console.log(`Successfully created page: https://www.notion.so/${pageId.replace(/-/g, '')}`);
 
