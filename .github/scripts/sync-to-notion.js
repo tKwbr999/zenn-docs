@@ -12,16 +12,15 @@ const notion = new Client({
   auth: process.env.NOTION_API_KEY,
 });
 
-const parentId = process.env.NOTION_PARENT_ID; // Get parent ID from env
+const databaseId = process.env.NOTION_DATABASE_ID; // Use Database ID
 const repoRoot = process.cwd();
 
-if (!process.env.NOTION_API_KEY) {
-  console.error('Error: NOTION_API_KEY must be set.');
+if (!process.env.NOTION_API_KEY || !databaseId) { // Check for Database ID
+  console.error('Error: NOTION_API_KEY and NOTION_DATABASE_ID must be set.');
   process.exit(1);
 }
-// parentId is only required for creating new pages, check later
 
-// Create Notion page properties from frontmatter
+// Create Notion page properties from frontmatter (for Database)
 const createPageProperties = (frontmatter, relativeFilePath) => {
   const properties = {
     Name: { // Title property in Notion (must match your database)
@@ -33,24 +32,23 @@ const createPageProperties = (frontmatter, relativeFilePath) => {
         },
       ],
     },
-    // --- Add other properties based on your frontmatter and Notion database ---
-    Tags: { // Example: Multi-select property named "Tags"
-      multi_select: (frontmatter.topics || []).map(topic => ({ name: topic })),
-    },
-    Published: { // Example: Checkbox property named "Published"
-      checkbox: frontmatter.published === true, // Ensure boolean
-    },
-    Slug: { // Example: Text property named "Slug"
+    Slug: { // Slug property (assuming Rich Text type)
       rich_text: [
         {
           text: {
-            content: path.basename(relativeFilePath, path.extname(relativeFilePath)), // Use filename as slug
+            // Use notion_slug if available, otherwise fallback to filename
+            content: frontmatter.notion_slug || path.basename(relativeFilePath, path.extname(relativeFilePath)),
           },
         },
       ],
     },
-    // Icon property is handled separately during page create/update
-    // Add more properties as needed...
+    Tags: { // Tags property (assuming Multi-select type)
+      multi_select: (frontmatter.topics || frontmatter.tags || []).map(topic => ({ name: topic })),
+    },
+    Published: { // Published property (assuming Checkbox type)
+      checkbox: frontmatter.published === true, // Ensure boolean
+    },
+    // Add more properties as needed based on your database schema...
   };
   return properties;
 };
@@ -102,15 +100,50 @@ const appendBlocksToPage = async (pageId, blocks) => {
         block_id: pageId,
         children: chunk,
       });
-      await new Promise(resolve => setTimeout(resolve, 200)); // Add delay
+      await new Promise(resolve => setTimeout(resolve, 300)); // Add delay
     } catch (error) {
       console.error(`[${pageId}] Error appending blocks chunk ${Math.floor(i / chunkSize) + 1}:`, error);
       console.error('Failed blocks chunk:', JSON.stringify(chunk.map(b => b.type), null, 2));
       if (error.body) {
         console.error('Notion API Error Body:', error.body);
       }
-      throw error;
+      throw error; // Re-throw error to stop processing if appending fails
     }
+  }
+};
+
+// Find existing page in the database by Slug
+const findPageBySlug = async (slug) => {
+  if (!slug) {
+    console.error("Error: Slug (from notion_slug) is required to find a page.");
+    return null;
+  }
+  try {
+    console.log(`Searching for page with Slug: ${slug} in database: ${databaseId}`);
+    const response = await notion.databases.query({
+      database_id: databaseId,
+      filter: {
+        property: 'Slug', // Assuming the property name in Notion is 'Slug'
+        rich_text: {
+          equals: slug,
+        },
+      },
+    });
+    if (response.results.length > 0) {
+      console.log(`Found existing page with ID: ${response.results[0].id}`);
+      return response.results[0];
+    } else {
+      console.log(`No existing page found with Slug: ${slug}`);
+      return null;
+    }
+  } catch (error) {
+    console.error(`Error finding page with Slug "${slug}":`, error);
+     if (error.code === 'validation_error' && error.message.includes('database_id')) {
+        console.error(`Database with ID ${databaseId} not found or not shared.`);
+    } else if (error.code === 'validation_error' && error.message.includes('property')) {
+        console.error(`Property 'Slug' not found in database ${databaseId}. Please check the property name.`);
+    }
+    return null;
   }
 };
 
@@ -139,7 +172,7 @@ const updateFrontmatterWithPageId = async (relativeFilePath, pageId) => {
 };
 
 
-// Sync a single Markdown file to Notion (Create or Update)
+// Sync a single Markdown file to Notion (Create or Update in Database)
 const syncFileToNotion = async (relativeFilePath) => {
   const fullPath = path.join(repoRoot, relativeFilePath);
   console.log(`\nProcessing file: ${relativeFilePath}`);
@@ -153,21 +186,31 @@ const syncFileToNotion = async (relativeFilePath) => {
       return;
     }
 
-    // Skip if title is missing (Notion requires a title)
+    // Skip if title is missing
     if (!frontmatter.title) {
       console.warn(`[${relativeFilePath}] Skipping: Title is missing in frontmatter.`);
       return;
     }
 
+    // Use notion_slug if available, otherwise fallback to filename (without extension)
+    const slug = frontmatter.notion_slug || path.basename(relativeFilePath, path.extname(relativeFilePath));
+    if (!slug) {
+        console.warn(`[${relativeFilePath}] Skipping: Could not determine slug (missing notion_slug and filename).`);
+        return;
+    }
+
     const notionBlocks = markdownToBlocks(markdownBody);
     const pageProperties = createPageProperties(frontmatter, relativeFilePath);
+    // Use emoji for icon if available
     const pageIcon = frontmatter.emoji ? { type: 'emoji', emoji: frontmatter.emoji } : undefined;
 
-    let pageId = frontmatter.notionPageId;
+    // Find existing page by slug
+    const existingPage = await findPageBySlug(slug);
+    let pageId = existingPage ? existingPage.id : null;
 
     if (pageId) {
       // --- Update Existing Page ---
-      console.log(`[${relativeFilePath}] Found notionPageId: ${pageId}. Attempting to update.`);
+      console.log(`[${relativeFilePath}] Found existing page ID: ${pageId}. Attempting to update.`);
       try {
         // 1. Update page properties and icon
         await notion.pages.update({
@@ -176,14 +219,14 @@ const syncFileToNotion = async (relativeFilePath) => {
           icon: pageIcon,
           archived: false, // Ensure page is not archived
         });
-        console.log(`[${pageId}] Page properties updated.`);
-        await new Promise(resolve => setTimeout(resolve, 100)); // Delay
+        console.log(`[${pageId}] Page properties and icon updated.`);
+        await new Promise(resolve => setTimeout(resolve, 300)); // Delay
 
         // 2. Clear existing blocks
         console.log(`[${pageId}] Clearing existing blocks...`);
         await clearPageBlocks(pageId);
         console.log(`[${pageId}] Existing blocks cleared.`);
-        await new Promise(resolve => setTimeout(resolve, 100)); // Delay
+        await new Promise(resolve => setTimeout(resolve, 300)); // Delay
 
         // 3. Append new blocks
         console.log(`[${pageId}] Appending new blocks...`);
@@ -192,43 +235,35 @@ const syncFileToNotion = async (relativeFilePath) => {
 
         console.log(`[${relativeFilePath}] Successfully updated page: https://www.notion.so/${pageId.replace(/-/g, '')}`);
 
+        // Update frontmatter with the confirmed page ID (in case it was missing)
+        await updateFrontmatterWithPageId(relativeFilePath, pageId);
+
+
       } catch (error) {
-        if (error.code === 'object_not_found') {
-          console.warn(`[${relativeFilePath}] Page ${pageId} not found or archived. Will create a new page.`);
-          pageId = null; // Reset pageId to trigger creation flow
-        } else {
-          console.error(`[${relativeFilePath}] Error updating page ${pageId}:`, error.message);
-          if (error.body) console.error('Notion API Error Body:', error.body);
-          pageId = null; // Attempt creation if update fails for other reasons
-          console.warn(`[${relativeFilePath}] Resetting pageId due to update error. Will attempt to create a new page.`);
-        }
+        console.error(`[${relativeFilePath}] Error updating page ${pageId}:`, error.message);
+        if (error.body) console.error('Notion API Error Body:', error.body);
+        // Optionally handle specific errors, e.g., if page was deleted manually
       }
-    }
-
-    if (!pageId) {
+    } else {
       // --- Create New Page ---
-      // Check if parentId is set before attempting creation
-      if (!parentId) {
-          console.error(`[${relativeFilePath}] Error: Cannot create new page because NOTION_PARENT_ID is not set.`);
-          return; // Skip creation if parentId is missing
-      }
-
-      console.log(`[${relativeFilePath}] No notionPageId found or update failed. Creating new page...`);
+      console.log(`[${relativeFilePath}] No existing page found with Slug '${slug}'. Creating new page...`);
       try {
         const response = await notion.pages.create({
-          parent: { database_id: parentId }, // Use parentId here
+          parent: { database_id: databaseId }, // Create in the specified database
           properties: pageProperties,
           icon: pageIcon,
-          // Children are added via appendBlocksToPage
+          children: notionBlocks.slice(0, 100), // Add first chunk of blocks during creation
         });
         pageId = response.id;
         console.log(`[${relativeFilePath}] New page created with ID: ${pageId}`);
-        await new Promise(resolve => setTimeout(resolve, 100)); // Delay
+        await new Promise(resolve => setTimeout(resolve, 300)); // Delay
 
-        // Append blocks to the new page
-        console.log(`[${pageId}] Appending blocks to the new page...`);
-        await appendBlocksToPage(pageId, notionBlocks);
-        console.log(`[${pageId}] Blocks appended to the new page.`);
+        // Append remaining blocks if any
+        if (notionBlocks.length > 100) {
+            console.log(`[${pageId}] Appending remaining blocks to the new page...`);
+            await appendBlocksToPage(pageId, notionBlocks.slice(100));
+            console.log(`[${pageId}] Remaining blocks appended to the new page.`);
+        }
 
         // Add notionPageId to the Markdown file
         await updateFrontmatterWithPageId(relativeFilePath, pageId);

@@ -66,7 +66,7 @@ jobs:
         if: steps.changed_files.outputs.any_changed == 'true'
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          NOTION_PARENT_ID: ${{ secrets.NOTION_PARENT_ID }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           # Pass changed files as arguments to the script
         run: node .github/scripts/sync-to-notion.js ${{ steps.changed_files.outputs.all_changed_files }}
 
