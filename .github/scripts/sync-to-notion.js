@@ -158,10 +158,14 @@ async function updateNotionPage(pageId, title, blocks) {
     }
     
     // 新しいブロックを追加
-    await notion.blocks.children.append({
-      block_id: pageId,
-      children: blocks
-    });
+    const chunkSize = 100; // Notion APIの制限
+    for (let i = 0; i < blocks.length; i += chunkSize) {
+      const chunk = blocks.slice(i, i + chunkSize);
+      await notion.blocks.children.append({
+        block_id: pageId,
+        children: chunk
+      });
+    }
     
     console.log(`Notionページ "${title}" (${pageId}) を更新しました。`);
   } catch (error) {
