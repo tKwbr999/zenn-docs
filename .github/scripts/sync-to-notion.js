@@ -166,6 +166,7 @@ async function updateNotionPage(pageId, title, blocks) {
     console.log(`Notionページ "${title}" (${pageId}) を更新しました。`);
   } catch (error) {
     console.error(`Notionページ "${title}" (${pageId}) の更新に失敗しました:`, error);
+    throw new Error(`Notionページ "${title}" (${pageId}) の更新に失敗しました: ${error.message}`); // エラーを再スローしてmain関数でキャッチする
   }
 }
 
