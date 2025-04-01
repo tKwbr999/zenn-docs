@@ -134,7 +134,7 @@ async function updateNotionPage(pageId, title, blocks) {
     await notion.pages.update({
       page_id: pageId,
       properties: {
-        Title: {
+        Name: { // プロパティ名を 'Title' から 'Name' に変更
           title: [
             {
               text: {
