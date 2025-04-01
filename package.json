@@ -11,6 +11,7 @@
   "description": "",
   "dependencies": {
     "@notionhq/client": "^2.3.0",
+    "@tryfabric/martian": "^1.2.4",
     "dotenv": "^16.4.7",
     "gray-matter": "^4.0.3",
     "zenn-cli": "^0.1.158"
